@@ -1,0 +1,33 @@
+{
+  "name": "aave-indexing",
+  "version": "1.0.0",
+  "description": "Scripts to index and track metrics for tokens in the AAVE protocol",
+  "main": "src/aave-metrics-indexer.js",
+  "scripts": {
+    "index": "node src/aave-metrics-indexer.js",
+    "save": "node src/save-metrics.js",
+    "compare": "node src/historical-metrics.js",
+    "market": "node src/multi-market-indexer.js",
+    "all-markets": "node src/multi-market-indexer.js all",
+    "base": "node src/base-metrics-indexer.js",
+    "base:compare": "node src/base-historical-metrics.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "base:continuous": "node src/base-metrics-indexer.js --continuous"
+  },
+  "keywords": [
+    "aave",
+    "defi",
+    "blockchain",
+    "metrics",
+    "indexing"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aave/contract-helpers": "^1.33.1",
+    "@aave/math-utils": "^1.33.1",
+    "@bgd-labs/aave-address-book": "^4.17.2",
+    "dayjs": "^1.11.13",
+    "ethers": "^5.8.0"
+  }
+}
