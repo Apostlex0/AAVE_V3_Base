@@ -9,6 +9,7 @@ const markets = require('@bgd-labs/aave-address-book');
 const dayjs = require('dayjs');
 const fs = require('fs');
 const path = require('path');
+const { initializeDatabase, storeMetrics } = require('./db-storage');
 
 // Configure Base RPC URL
 const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://base-mainnet.g.alchemy.com/v2/d40IDFW5NaYldNIOSb_vuJBNF5sm1WR7';
@@ -93,7 +94,7 @@ async function fetchReservesList() {
   }
 }
 
-async function indexBaseAaveMetrics(blockNumber = null) {
+async function indexBaseAaveMetrics(blockNumber = null, storeInDb = false) {
   console.log('Initializing Base AAVE metrics indexer...');
   
   // Initialize ethers provider
@@ -145,7 +146,7 @@ async function indexBaseAaveMetrics(blockNumber = null) {
 
     // Extract metrics for each token
     const metricsPerToken = formattedReserves.map(reserve => {
-      // Convert price from wei to normal value (divide by 10^18)
+      // Convert price from wei to normal value (divide by 10^16)
       const priceInUSD = (reserve.priceInMarketReferenceCurrency * 
         reserves.baseCurrencyData.marketReferenceCurrencyPriceInUsd) / 1e16;
       
@@ -163,6 +164,13 @@ async function indexBaseAaveMetrics(blockNumber = null) {
       const utilizationRate = totalSupplied > 0 
         ? (totalBorrowed / totalSupplied) * 100 
         : 0;
+      
+      // Log the values with correct price
+      console.log(`\n${reserve.name} (${reserve.symbol}) - CONVERTED VALUES:`);
+      console.log(`Price (converted from wei): $${priceInUSD.toFixed(6)}`);
+      console.log(`Total Supplied (in USD): $${formatNumber(totalSuppliedUSD)}`);
+      console.log(`Total Borrowed (in USD): $${formatNumber(totalBorrowedUSD)}`);
+      console.log(`Liquidity (in USD): $${formatNumber(liquidityUSD)}`);
       
       return {
         token: reserve.name,
@@ -287,6 +295,12 @@ async function indexBaseAaveMetrics(blockNumber = null) {
       );
     }
     
+    // Store in database if requested
+    if (storeInDb) {
+      await storeMetrics(metricsData);
+      console.log(`Metrics for block ${currentBlock} stored in database`);
+    }
+    
     return metricsData;
     
   } catch (error) {
@@ -299,50 +313,63 @@ async function indexBaseAaveMetrics(blockNumber = null) {
  * Starts continuous block monitoring for Base AAVE metrics
  */
 async function startContinuousIndexing() {
+  console.log('Starting continuous Base AAVE metrics indexing...');
   
-  // Initialize ethers provider
-  const provider = new ethers.providers.JsonRpcProvider(BASE_RPC_URL);
-  
-  // Get current block as starting point
-  const currentBlock = await provider.getBlockNumber();
-  let lastProcessedBlock = currentBlock;
-  
-  // Set up polling interval (2 seconds as requested)
-  const POLLING_INTERVAL = 1500;
-  
-  // Start polling for new blocks
-  const intervalId = setInterval(async () => {
-    try {
-      const blockNumber = await provider.getBlockNumber();
-      
-      // Process only new blocks
-      if (blockNumber <= lastProcessedBlock) {
-        return;
+  try {
+    // Initialize database schema first
+    await initializeDatabase();
+    console.log('Database schema initialized');
+    
+    // Initialize ethers provider
+    const provider = new ethers.providers.JsonRpcProvider(BASE_RPC_URL);
+    
+    // Get current block as starting point
+    const currentBlock = await provider.getBlockNumber();
+    console.log(`Starting from block ${currentBlock}...`);
+    
+    let lastProcessedBlock = currentBlock;
+    
+    // Set up polling interval (2 seconds as requested)
+    const POLLING_INTERVAL = 2000;
+    
+    // Start polling for new blocks
+    const intervalId = setInterval(async () => {
+      try {
+        const blockNumber = await provider.getBlockNumber();
+        
+        // Process only new blocks
+        if (blockNumber <= lastProcessedBlock) {
+          return;
+        }
+        
+        console.log(`\n==== New block detected: ${blockNumber} ====`);
+        
+        // Small delay to ensure the block is fully propagated
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Fetch metrics for this block and store in database
+        await indexBaseAaveMetrics(blockNumber, true);
+        
+        // Update processed block
+        lastProcessedBlock = blockNumber;
+        
+      } catch (error) {
+        console.error(`Error processing block:`, error);
       }
-      
-
-      
-      // Small delay to ensure the block is fully propagated
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Fetch metrics for this block
-      await indexBaseAaveMetrics(blockNumber);
-      
-      // Update processed block
-      lastProcessedBlock = blockNumber;
-      
-    } catch (error) {
-      console.error(`Error processing block:`, error);
-    }
-  }, POLLING_INTERVAL);
-  
-  // Handle graceful shutdown
-  process.on('SIGINT', () => {
-    clearInterval(intervalId);
-    console.log('Continuous indexing stopped');
-    process.exit(0);
-  });
-  
+    }, POLLING_INTERVAL);
+    
+    // Handle graceful shutdown
+    process.on('SIGINT', () => {
+      clearInterval(intervalId);
+      console.log('Continuous indexing stopped');
+      process.exit(0);
+    });
+    
+    console.log(`Continuous indexing started. Polling every ${POLLING_INTERVAL/1000} seconds. Press Ctrl+C to stop.`);
+  } catch (error) {
+    console.error('Failed to start continuous indexing:', error);
+    throw error;
+  }
 }
 
 // Helper functions
@@ -405,7 +432,7 @@ if (require.main === module) {
       });
   } else {
     // Run indexer once (default behavior)
-    indexBaseAaveMetrics()
+    indexBaseAaveMetrics(null, false)
       .then(() => {
         console.log('Base AAVE indexing completed successfully');
       })
